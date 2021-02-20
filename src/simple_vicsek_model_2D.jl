@@ -511,7 +511,7 @@ function calc_vt(flock, p_id, k_t, v_t)
 
     # Ensure its [0, 360)
     if new_Θi < 0 
-        new_Θi = new_Θi + 360
+        new_Θi = new_Θi + (2*pi)
     end
 
     # Convert back to cartesian coords...
