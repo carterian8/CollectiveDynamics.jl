@@ -138,8 +138,8 @@ Inertial Flock type
 * v0 -> particles speed
 * r0 -> local interaction range
 * η -> noise intensity
-* ω -> maximal angular velocity
-* φ -> particle field of view
+* ω -> maximal angular velocity radians
+* φ -> particle field of view radians
 
 # Fields
 * N -> number of particles
@@ -147,13 +147,14 @@ Inertial Flock type
 * r0 -> local interaction range
 * dt -> integration time step
 * η -> noise intensity
-* ω -> maximal angular velocity
-* φ -> particle field of view
+* ω -> maximal angular velocity radians
+* φ -> particle field of view radians
 
 * pos -> particles' positions
 * vel -> particles' velocities
 * r -> particles' interaction ranges
-* v_r -> interaction vector
+* pos_r -> interaction vector of postions
+* v_r -> interaction vector of velocities
 * k_r -> local connectivity
 
 * p_cell_id -> particle's cell id
@@ -170,6 +171,7 @@ mutable struct Flock
     pos :: Array{Array{Float64, 1}}
     vel :: Array{Array{Float64, 1}}
     r :: Array{Array{Float64, 1}}
+    pos_r :: Array{Array{Float64, 1}}
     v_r :: Array{Array{Float64, 1}}
     k_r :: Array{Float64, 1}
 
@@ -186,6 +188,7 @@ mutable struct Flock
         r = r0 * [ones(2) for i in 1:N]
 
         # interaction vector
+        pos_r = [zeros(2) for i in 1:N]
         v_r = [zeros(2) for i in 1:N]
 
         # connectivity per particle
@@ -194,7 +197,7 @@ mutable struct Flock
         # box index for each particle in each dimension
         p_cell_id = [zeros(Int,2) for i in 1:N]
 
-        new(N, v0, r0, dt, η, deg2rad(ω), deg2rad(φ), pos, vel, r, v_r, k_r, p_cell_id)
+        new(N, v0, r0, dt, η, deg2rad(ω), deg2rad(φ), pos, vel, r, pos_r, v_r, k_r, p_cell_id)
     end
 end
 
@@ -223,6 +226,7 @@ end
 function check_bulk_cells(flock, p_id, cell_id, p_per_cell)
 
     k_t = Vector{Float64}(undef,10)
+    pos_t = Vector{Vector{Float64}}(undef,10)
     v_t = Vector{Vector{Float64}}(undef,10)
 
     c = 1
@@ -231,7 +235,7 @@ function check_bulk_cells(flock, p_id, cell_id, p_per_cell)
 
     for i in -1:1, j in -1:1
         key = [cell_id[1]+i, cell_id[2]+j]
-        k_t[c], v_t[c] = part_bulk_cell_interaction(p_id, flock, get!(p_per_cell, key, []))
+        k_t[c], v_t[c], pos_t[c] = part_bulk_cell_interaction(p_id, flock, get!(p_per_cell, key, []))
         c += 1
         # println(key, "\t", get!(p_per_cell, key, []))
     end
@@ -239,14 +243,16 @@ function check_bulk_cells(flock, p_id, cell_id, p_per_cell)
     # Include current particle in interactions
     k_t[c] = 1
     v_t[c] = flock.vel[p_id]
+    pos_t[c] = flock.pos[p_id]
     
-    return calc_vt(flock, p_id, k_t, v_t)
+    return calc_vt(flock, p_id, k_t, pos_t, v_t)
 end
 
 ### ============== ### ============== ###
 function check_corners(flock, p_id, cell_id, p_per_cell, L, M)
 
     k_t = Vector{Float64}(undef,10)
+    pos_t = Vector{Vector{Float64}}(undef,10)
     v_t = Vector{Vector{Float64}}(undef,10)
 
     c = 1
@@ -255,28 +261,28 @@ function check_corners(flock, p_id, cell_id, p_per_cell, L, M)
     if cell_id[1] == 1 && cell_id[2] == 1
         for i in [M, 1, 2], j in [M, 1, 2]
             key = [i, j]
-            k_t[c], v_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
+            k_t[c], v_t[c], pos_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
             c += 1
             # println(key, "\t", get!(p_per_cell, key, []))
         end
     elseif cell_id[1] == 1 && cell_id[2] == M
         for i in [M, 1, 2], j in [M-1, M, 1]
             key = [i, j]
-            k_t[c], v_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
+            k_t[c], v_t[c], pos_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
             c += 1
             # println(key, "\t", get!(p_per_cell, key, []))
         end
     elseif cell_id[1] == M && cell_id[2] == 1
         for i in [M-1, M, 1], j in [M, 1, 2]
             key = [i, j]
-            k_t[c], v_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
+            k_t[c], v_t[c], pos_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
             c += 1
             # println(key, "\t", get!(p_per_cell, key, []))
         end
     elseif cell_id[1] == M && cell_id[2] == M
         for i in [M-1, M, 1], j in [M-1, M, 1]
             key = [i, j]
-            k_t[c], v_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
+            k_t[c], v_t[c], pos_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
             c += 1
             # println(key, "\t", get!(p_per_cell, key, []))
         end
@@ -285,14 +291,16 @@ function check_corners(flock, p_id, cell_id, p_per_cell, L, M)
     # Include current particle in interactions
     k_t[c] = 1
     v_t[c] = flock.vel[p_id]
+    pos_t[c] = flock.pos[p_id]
 
-    return calc_vt(flock, p_id, k_t, v_t)
+    return calc_vt(flock, p_id, k_t, pos_t, v_t)
 end
 
 ### ============== ### ============== ###
 function check_bottom_cells(flock, p_id, cell_id, p_per_cell, L, M)
 
     k_t = Vector{Float64}(undef,10)
+    pos_t = Vector{Vector{Float64}}(undef,10)
     v_t = Vector{Vector{Float64}}(undef,10)
 
     c = 1
@@ -301,7 +309,7 @@ function check_bottom_cells(flock, p_id, cell_id, p_per_cell, L, M)
     # if in(cell_id[1], 2:M-1) && cell_id[2] == M
         for i in -1:1, j in [M-1, M, 1]
             key = [cell_id[1] + i, j]
-            k_t[c], v_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
+            k_t[c], v_t[c], pos_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
             c += 1
             # println(key, "\t", get!(p_per_cell, key, []))
         end
@@ -310,13 +318,15 @@ function check_bottom_cells(flock, p_id, cell_id, p_per_cell, L, M)
     # Include current particle in interactions
     k_t[c] = 1
     v_t[c] = flock.vel[p_id]
+    pos_t[c] = flock.pos[p_id]
 
-    return calc_vt(flock, p_id, k_t, v_t)
+    return calc_vt(flock, p_id, k_t, pos_t, v_t)
 end
 
 ### ============== ### ============== ###
 function check_top_cells(flock, p_id, cell_id, p_per_cell, L, M)
     k_t = Vector{Float64}(undef,10)
+    pos_t = Vector{Vector{Float64}}(undef,10)
     v_t = Vector{Vector{Float64}}(undef,10)
 
     c = 1
@@ -325,7 +335,7 @@ function check_top_cells(flock, p_id, cell_id, p_per_cell, L, M)
     # if in(cell_id[1], 2:M-1) && cell_id[2] == 1
         for i in -1:1, j in [M, 1, 2]
             key = [cell_id[1] + i, j]
-            k_t[c], v_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
+            k_t[c], v_t[c], pos_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
             c += 1
             # println(key, "\t", get!(p_per_cell, key, []))
         end
@@ -334,14 +344,16 @@ function check_top_cells(flock, p_id, cell_id, p_per_cell, L, M)
     # Include current particle in interactions
     k_t[c] = 1
     v_t[c] = flock.vel[p_id]
+    pos_t[c] = flock.pos[p_id]
 
-    return calc_vt(flock, p_id, k_t, v_t)
+    return calc_vt(flock, p_id, k_t, pos_t, v_t)
 end
 
 ### ============== ### ============== ###
 function check_left_cells(flock, p_id, cell_id, p_per_cell, L, M)
 
     k_t = Vector{Float64}(undef,10)
+    pos_t = Vector{Vector{Float64}}(undef,10)
     v_t = Vector{Vector{Float64}}(undef,10)
 
     c = 1
@@ -350,7 +362,7 @@ function check_left_cells(flock, p_id, cell_id, p_per_cell, L, M)
     # if cell_id[1] == 1 && in(cell_id[2], 2:M-1)
         for i in [M, 1, 2], j in -1:1
             key = [i, cell_id[2] + j]
-            k_t[c], v_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
+            k_t[c], v_t[c], pos_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
             c += 1
             # println(key, "\t", get!(p_per_cell, key, []))
         end
@@ -359,14 +371,16 @@ function check_left_cells(flock, p_id, cell_id, p_per_cell, L, M)
     # Include current particle in interactions
     k_t[c] = 1
     v_t[c] = flock.vel[p_id]
+    pos_t[c] = flock.pos[p_id]
 
-    return calc_vt(flock, p_id, k_t, v_t)
+    return calc_vt(flock, p_id, k_t, pos_t, v_t)
 end
 
 ### ============== ### ============== ###
 function check_right_cells(flock, p_id, cell_id, p_per_cell, L, M)
 
     k_t = Vector{Float64}(undef,10)
+    pos_t = Vector{Vector{Float64}}(undef,10)
     v_t = Vector{Vector{Float64}}(undef,10)
 
     c = 1
@@ -375,7 +389,7 @@ function check_right_cells(flock, p_id, cell_id, p_per_cell, L, M)
     # if cell_id[1] == M && in(cell_id[2], 2:M-1)
         for i in [M-1, M, 1], j in -1:1
             key = [i, cell_id[2] + j]
-            k_t[c], v_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
+            k_t[c], v_t[c], pos_t[c] = part_bound_cell_interaction(p_id, flock, get!(p_per_cell, key, []), L)
             c += 1
             # println(key, "\t", get!(p_per_cell, key, []))
         end
@@ -384,8 +398,9 @@ function check_right_cells(flock, p_id, cell_id, p_per_cell, L, M)
     # Include current particle in interactions
     k_t[c] = 1
     v_t[c] = flock.vel[p_id]
+    pos_t[c] = flock.pos[p_id]
 
-    return calc_vt(flock, p_id, k_t, v_t)
+    return calc_vt(flock, p_id, k_t, pos_t, v_t)
 end
 
 ### ============== ### ============== ###
@@ -416,8 +431,8 @@ end
 function part_bulk_cell_interaction(p_id, flock, cell_parts)
 
     k = 0.
+    pos_r = zeros(Float64, 2)
     v_r = zeros(Float64, 2)
-    half_φ = flock.φ * 0.5
 
     for j in cell_parts
         # Make jth point relative to point at p_id
@@ -425,27 +440,22 @@ function part_bulk_cell_interaction(p_id, flock, cell_parts)
 
         # Do a distance and field of view check
         if norm(rel_pos_j) > 0. && norm(rel_pos_j) <= flock.r0
-            # Calculate angle between relative jth point and velocity vector at point p_id
-            angle_i_j = angle_btwn_vecs(flock.vel[p_id],rel_pos_j)
-            # println("part_bulk_cell: Within r0")
-            if angle_i_j <= half_φ
-                # println("part_bulk_cell: Within FOV")
-                k += 1.
-                v_r = v_r + flock.vel[j]
-            end
+            k += 1.
+            v_r = v_r + flock.vel[j]
+            pos_r = pos_r + flock.pos[j]
         end
     end
 
-    return k, v_r
+    return k, v_r, pos_r
 end
 
 ### ============== ### ============== ###
 function part_bound_cell_interaction(p_id, flock, cell_parts, L)
 
     k = 0.
+    pos_r = zeros(Float64, 2)
     v_r = zeros(Float64, 2)
     d_v = zeros(Float64, 2)
-    half_φ = flock.φ * 0.5
 
     for j in cell_parts
 
@@ -457,25 +467,52 @@ function part_bound_cell_interaction(p_id, flock, cell_parts, L)
 
         # check if particles are within interaction range and field of view
         if norm(d_v) > 0. && norm(d_v) <= flock.r0
-            # Calculate angle between relative jth point and velocity vector at point p_id
-            angle_i_j = angle_btwn_vecs(flock.vel[p_id], d_v)
-            # println("part_bound_cell: Within r0")
-            if angle_i_j <= half_φ
-                # println("part_bound_cell: Within FOV")
-                k += 1.
-                v_r = v_r + flock.vel[j]
-            end
+            k += 1.
+            v_r = v_r + flock.vel[j]
+            pos_r = pos_r + flock.pos[j]
         end
     end
 
-    return k, v_r
+    return k, v_r, pos_r
 end
 
 ### ============== ### ============== ###
 
-function calc_vt(flock, p_id, k_t, v_t)
+function calc_vt(flock, p_id, k_t, pos_t, v_t)
 
     if sum(k_t) <= 0.
+        # No neighbors - return...
+        println("kt was 0")
+        return zeros(2)
+    end
+
+    # Filter out particles outside this particles FOV 'φ'...
+    half_φ = flock.φ * 0.5
+    v_t_within_fov = zeros(Float64, 2)
+    for i = 1:length(pos_t)
+
+        # Treating particle being updated as origin. Make the current particle
+        # in the interaction radius relative to the particle being updated...
+        rel_pos_i = pos_t[i] - flock.pos[p_id]
+
+        # Calculate the angle between the particle in question and the angle 
+        # formed by the velocity vectory of the particle to update...
+        angle_i_j = angle_btwn_vecs(flock.vel[p_id],rel_pos_i)
+
+        # Determine if this angle is within a half width of the FOV parameter
+        # 'φ'...
+        if angle_i_j <= half_φ
+            v_t_within_fov = v_t_within_fov + v_t[i]
+        else
+            k_t = k_t - 1
+        end
+    end
+
+    # Update the inputs..
+    v_t = v_t_within_fov
+
+    if sum(k_t) <= 0.
+        # No neighbors in view - return...
         println("kt was 0")
         return zeros(2)
     end
@@ -492,6 +529,7 @@ function calc_vt(flock, p_id, k_t, v_t)
 
     # Calc difference in orientation between the current orientation and the 
     # average orientation of the interacting particles...
+    print(k_t)
     avg_vt = sum(v_t) ./ sum(k_t)
     avg_Θ = atan(avg_vt[2], avg_vt[1])
     if avg_Θ < 0
@@ -511,7 +549,7 @@ function calc_vt(flock, p_id, k_t, v_t)
 
     # Ensure its [0, 360)
     if new_Θi < 0 
-        new_Θi = new_Θi + 360
+        new_Θi = new_Θi + (2*pi)
     end
 
     # Convert back to cartesian coords...
