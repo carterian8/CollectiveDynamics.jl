@@ -88,7 +88,7 @@ Simulation Box
 
 * p_per_cell -> Dict: cell_id => [particles id within cell]
 """
-type Box
+struct Box
     L :: Float64
     M :: Float64
 
@@ -178,7 +178,7 @@ Inertial Flock type
 
 * p_cell_id -> particle's celll id
 """
-type Flock
+struct Flock
     N  :: Int64
     v0 :: Float64
     r0 :: Float64
